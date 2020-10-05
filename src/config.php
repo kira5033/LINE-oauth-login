@@ -1,0 +1,5 @@
+<?php
+
+define('CLIENT_ID','CLIENT_ID');
+define('CLIENT_SECRET','CLIENT_SECRET');
+define('CALLBACK_URL','CALLBACK_URL');
