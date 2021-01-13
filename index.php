@@ -25,6 +25,9 @@ class LINE_Controller {
             case "oauth":
                 $this->oauth();
                 break;
+            case "login":
+                $this->login();
+                break;
             case "logout":
                 $this->logout();
                 break;
@@ -37,12 +40,23 @@ class LINE_Controller {
     function index(){
 
         $access_token = (isset($_SESSION['access_token']) && $_SESSION['access_token'] != '') ? $_SESSION['access_token'] : '';
+        $id_token = (isset($_SESSION['id_token']) && $_SESSION['id_token'] != '') ? $_SESSION['id_token'] : '';
 
         $Line = new LineOAuthLogin(CLIENT_ID,CLIENT_SECRET);
 
-        $isLogin = $Line->getProfile($access_token);
+        if(!$Line->validateViaIDToken($id_token) || !$Line->getProfile($access_token)){
 
-        include_once dirname(__FILE__) . '/view.php';
+            $this->login();
+
+        }else{
+            include_once dirname(__FILE__) . '/view.php';
+        }
+
+    }
+
+    function login(){
+
+        include_once dirname(__FILE__) . '/login.php';
 
     }
 
@@ -51,7 +65,7 @@ class LINE_Controller {
 
         $_SESSION['state'] = md5(time());
 
-        header('Location: '.$Line->createOAuth(CALLBACK_URL, $_SESSION['state']));
+        header('Location: '.$Line->createOAuthUrl(CALLBACK_URL, $_SESSION['state']));
     }
 
     function logout(){
@@ -63,6 +77,7 @@ class LINE_Controller {
         $Line->revoke($access_token);
 
         unset($_SESSION['access_token']);
+        unset($_SESSION['id_token']);
 
         header('Location: /');
     }

@@ -2,8 +2,6 @@
 
 namespace src;
 
-date_default_timezone_set("Asia/Taipei");
-
 class LineOAuthLogin {
 
     private $LINE_ID;
@@ -12,13 +10,17 @@ class LineOAuthLogin {
 
     private $userId;
 
-    private $displayName;
+    private $userName;
 
-    private $pictureUrl;
+    private $userPicture;
 
-    private $accessToken;
+    private $userAccessToken;
 
-    private $verifyData;
+    private $userIdToken;
+
+    private $jwtData;
+
+    private $response;
 
     public function __construct($ID, $SECRET){
         $this->LINE_ID = $ID;
@@ -32,7 +34,7 @@ class LineOAuthLogin {
      * @param bool $forceAccount
      * @return string
      */
-    public function createOAuth($callback, $state, $forceAccount = FALSE){
+    public function createOAuthUrl($callback, $state, $forceAccount = FALSE){
 
         $parameter = [
             'response_type' => 'code',
@@ -49,23 +51,23 @@ class LineOAuthLogin {
 
     /**
      * Handle OAuth Callback Data
-     * @return array
+     * @return $this
      */
-    public function getOAuthResponse(){
+    public function catchResponse(){
 
-        $response = [];
+        $this->response = [];
 
         if(http_response_code() == 200){
 
             if(isset($_GET['code'])){
-                $response = [
+                $this->response = [
                     'success'           => TRUE,
                     'code'              => $_GET['code'],
                     'state'             => (isset($_GET['state'])) ? $_GET['state'] : '',
                     'status_changed'    => (isset($_GET['friendship_status_changed'])) ? $_GET['friendship_status_changed'] : false,
                 ];
             }else if(isset($_GET['error'])){
-                $response = [
+                $this->response = [
                     'success'   => FALSE,
                     'code'      => $_GET['error'],
                     'state'     => (isset($_GET['state'])) ? $_GET['state'] : '',
@@ -74,37 +76,46 @@ class LineOAuthLogin {
             }
         }
 
-        return $response;
+        return $this;
     }
 
     /**
-     * Get Access Token and Go Get User Profile
-     * @param $code
+     * Get access token and ID token , then get user profile to check
      * @param $redirect
+     * @param $state
      * @return bool
      */
-    public function Authorization($code, $redirect){
+    public function Authorization($redirect, $state = ''){
+
+        if( empty($redirect) ||
+            empty($this->response) ||
+            !$this->response['success'] ||
+            $this->response['state'] != $state
+        )
+        {
+            return false;
+        }
 
         $header = [
             'Content-Type: application/x-www-form-urlencoded'
         ];
         $content = [
             'grant_type'    => 'authorization_code',
-            'code'          => $code,
+            'code'          => $this->response['code'],
             'redirect_uri'  => $redirect,
             'client_id'     => $this->LINE_ID,
             'client_secret' => $this->LINE_SECRET,
         ];
 
-        $result = $this->post($header, "https://api.line.me/oauth2/v2.1/token", $content);
+        $result = $this->sendRequest('post', $header, "https://api.line.me/oauth2/v2.1/token", $content);
 
         if(empty($result->access_token)){
             return FALSE;
         }
 
-        $this->verifyAccessToken($result->id_token);
+        $this->setUserIdToken($result->id_token);
 
-        $this->accessToken = $result->access_token;
+        $this->setUserAccessToken($result->access_token);
 
         return $this->getProfile($result->access_token);
     }
@@ -123,19 +134,25 @@ class LineOAuthLogin {
             'Authorization: Bearer ' . $access_token,
         ];
 
-        $result = $this->get($header, "https://api.line.me/v2/profile");
+        $result = $this->sendRequest('get', $header, "https://api.line.me/v2/profile");
 
-        $this->userId = (isset($result->userId)) ? $result->userId : '';
-        $this->displayName = (isset($result->displayName)) ? $result->displayName : '';
-        $this->pictureUrl = (isset($result->pictureUrl)) ? $result->pictureUrl : '';
+        $userId = (isset($result->userId)) ? $result->userId : '';
+        $this->setUserId($userId);
+
+        $userName = (isset($result->displayName)) ? $result->displayName : '';
+        $this->setUserName($userName);
+
+        $userPicture = (isset($result->pictureUrl)) ? $result->pictureUrl : '';
+        $this->setUserPicture($userPicture);
 
         return isset($result->userId) && $result->userId != '';
     }
 
     /**
      * @param $token
+     * @return bool
      */
-    private function verifyAccessToken($token){
+    public function validateViaIDToken($token){
 
         $header = [
             "Content-Type: application/x-www-form-urlencoded",
@@ -146,10 +163,19 @@ class LineOAuthLogin {
             'client_id' => $this->LINE_ID,
         ];
 
-        $result = $this->post($header, "https://api.line.me/oauth2/v2.1/verify", $content);
+        $result = $this->sendRequest('post', $header, "https://api.line.me/oauth2/v2.1/verify", $content);
 
-        $this->verifyData = $result;
-
+        if(isset($result->error)){
+//            {
+//                "error": "invalid_request",
+//                "error_description": "IdToken expired."
+//            }
+            $this->jwtData = null;
+            return false;
+        }else{
+            $this->setJwtData($result);
+            return true;
+        }
     }
 
     /**
@@ -158,13 +184,13 @@ class LineOAuthLogin {
      * @param $channel_access_token
      * @return bool
      */
-    public function checkFriend($uerId, $channel_access_token){
+    public function checkBotFriend($uerId, $channel_access_token){
 
         $header = [
             'Authorization: Bearer ' . $channel_access_token,
         ];
 
-        $result = $this->get($header, "https://api.line.me/v2/bot/profile/".$uerId);
+        $result = $this->sendRequest('get', $header, "https://api.line.me/v2/bot/profile/".$uerId);
 
         return !empty($result->userId);
     }
@@ -186,23 +212,30 @@ class LineOAuthLogin {
             'client_secret' => $this->LINE_SECRET,
         ];
 
-        $result = $this->post($header, 'https://api.line.me/oauth2/v2.1/revoke', $content);
+        $result = $this->sendRequest('post',$header, 'https://api.line.me/oauth2/v2.1/revoke', $content);
 
         return http_response_code() == 200;
     }
 
-    private function get($header, $url){
+    private function sendRequest($method, $header, $url, $content = array()){
 
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_HTTPHEADER, $header);
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        if(strtolower($method) == 'post'){
+            curl_setopt($ch, CURLOPT_POST, true);
+        }
+        if(!empty($content)){
+            curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($content));
+        }
+
         $result = curl_exec($ch);
         $curl_response = curl_getinfo($ch);
         $result = json_decode($result);
         curl_close($ch);
 
-        if ( isset($curl_response['http_code']) && $curl_response['http_code'] != '200' )
+        if ( isset($curl_response['http_code']) && $curl_response['http_code'] != 200 )
         {
             return FALSE;
         }
@@ -211,44 +244,101 @@ class LineOAuthLogin {
 
     }
 
-    private function post($header, $url, $content){
-
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_HTTPHEADER, $header);
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($content));
-        $result = curl_exec($ch);
-        $curl_response = curl_getinfo($ch);
-        $result = json_decode($result);
-        curl_close($ch);
-
-        if ( isset($curl_response['http_code']) && $curl_response['http_code'] != '200' )
-        {
-            return FALSE;
-        }
-
-        return $result;
+    /**
+     * @param mixed $userId
+     */
+    private function setUserId($userId)
+    {
+        $this->userId = $userId;
     }
 
-    public function getUserId(){
+    /**
+     * @param mixed $userName
+     */
+    private function setUserName($userName)
+    {
+        $this->userName = $userName;
+    }
+
+    /**
+     * @param mixed $userPicture
+     */
+    private function setUserPicture($userPicture)
+    {
+        $this->userPicture = $userPicture;
+    }
+
+    /**
+     * @param mixed $userAccessToken
+     */
+    private function setUserAccessToken($userAccessToken)
+    {
+        $this->userAccessToken = $userAccessToken;
+    }
+
+    /**
+     * @param mixed $userIdToken
+     */
+    private function setUserIdToken($userIdToken)
+    {
+        $this->userIdToken = $userIdToken;
+    }
+
+    /**
+     * @param mixed $jwtData
+     */
+    private function setJwtData($jwtData)
+    {
+        $this->jwtData = $jwtData;
+    }
+
+    /**
+     * @return mixed
+     */
+    public function getUserId()
+    {
         return $this->userId;
     }
 
-    public function getUserName(){
-        return $this->displayName;
+    /**
+     * @return mixed
+     */
+    public function getUserName()
+    {
+        return $this->userName;
     }
 
-    public function getUserPicture(){
-        return $this->pictureUrl;
+    /**
+     * @return mixed
+     */
+    public function getUserPicture()
+    {
+        return $this->userPicture;
     }
 
-    public function getAccessToken(){
-        return $this->accessToken;
+    /**
+     * @return mixed
+     */
+    public function getUserAccessToken()
+    {
+        return $this->userAccessToken;
     }
 
-    public function getVerifyData(){
-        return $this->verifyData;
+    /**
+     * @return mixed
+     */
+    public function getUserIdToken()
+    {
+        return $this->userIdToken;
     }
+
+    /**
+     * @return mixed
+     */
+    public function getJwtData()
+    {
+        return $this->jwtData;
+    }
+
+
 }

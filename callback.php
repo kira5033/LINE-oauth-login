@@ -18,15 +18,15 @@ class Callback_Controller {
 
         $Line = new LineOAuthLogin(CLIENT_ID,CLIENT_SECRET);
 
-        $response = $Line->getOAuthResponse();
+        $state = (isset($_SESSION['state']) && $_SESSION['state'] != '') ? $_SESSION['state'] : '';
 
-        if(isset($_SESSION['state']) && $_SESSION['state'] != '' && $_SESSION['state'] == $response['state']){
+        $result = $Line->catchResponse()->Authorization(CALLBACK_URL, $state);
 
-            if($Line->Authorization($response['code'],CALLBACK_URL)){
+        if($result){
 
-                $_SESSION['access_token'] = $Line->getAccessToken();
+            $_SESSION['id_token'] = $Line->getUserIdToken();
+            $_SESSION['access_token'] = $Line->getUserAccessToken();
 
-            }
         }
 
         header('Location: /');

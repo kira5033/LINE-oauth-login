@@ -8,22 +8,16 @@
 </head>
 <body>
 
-<? if($isLogin): ?>
+Original Size：<br>
+<img alt="original" src="<?=$Line->getUserPicture() . ''?>"><br>
+Small Size：<br>
+<img alt="small" src="<?=$Line->getUserPicture() . '/small'?>"><br>
+UserId： <?=$Line->getUserId()?> <br>
+UserName： <?=$Line->getUserName()?> <br>
+AccessToken： <?=$access_token?><br>
+ID Token： <?=$id_token?><br>
 
-    Original Size：<br>
-    <img alt="original" src="<?=$Line->getUserPicture() . ''?>"><br>
-    Small Size：<br>
-    <img alt="small" src="<?=$Line->getUserPicture() . '/small'?>"><br>
-    UserId： <?=$Line->getUserId()?> <br>
-    UserName： <?=$Line->getUserName()?> <br>
-    AccessToken： <?=$access_token?><br>
+<button type="button" onclick="location.href = '/?act=logout'">Logout</button>
 
-    <button type="button" onclick="location.href = '/?act=logout'">Logout</button>
-
-<? else: ?>
-    Welcome to LINE Login <br>
-    You can press the down button to use LINE login, enjoy it. <br>
-    <button type="button" onclick="location.href = '/?act=oauth'">Login</button>
-<? endif; ?>
 </body>
 </html>
